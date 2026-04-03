@@ -2,7 +2,7 @@
   "id": "olen-plugin",
   "name": "Olen",
   "author": "Val",
-  "description": "Mythological life-operating system — habit tracker, day planner, progress dashboard, session manager",
+  "description": "Your life-operating system — habit tracker, day planner, progress dashboard, session manager",
   "version": "0.1.0",
   "minAppVersion": "1.0.0",
   "isDesktopOnly": false
