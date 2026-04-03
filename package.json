@@ -1,7 +1,7 @@
 {
   "name": "olen-plugin",
   "version": "0.1.0",
-  "description": "Olen — Mythological life-operating system for Obsidian",
+  "description": "Olen — Your life-operating system for Obsidian",
   "main": "main.js",
   "scripts": {
     "build": "node esbuild.config.mjs",
