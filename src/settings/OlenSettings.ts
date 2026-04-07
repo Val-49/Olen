@@ -9,6 +9,7 @@ import type { ActivityConfig, Category, TempleTask, Gender, WeightLogFrequency, 
 import { DEFAULT_ACTIVITIES, DEFAULT_DEV_CONFIG, DEFAULT_POMODORO_SETTINGS, LIFE_EXPECTANCY_MALE, LIFE_EXPECTANCY_FEMALE } from "../constants";
 import { THEME_PRESETS, THEME_LABELS } from "../data/themes";
 import { BUILTIN_TEMPLATE_IDS } from "../templates/builtins";
+import { toLocalDateStr } from "../utils/completions";
 
 export class OlenSettingTab extends PluginSettingTab {
   plugin: OlenPlugin;
@@ -320,7 +321,7 @@ export class OlenSettingTab extends PluginSettingTab {
             new Notice("Enter your current weight first");
             return;
           }
-          const today = new Date().toISOString().slice(0, 10);
+          const today = toLocalDateStr(new Date());
           // Avoid duplicate for today
           const existing = this.plugin.settings.personalStats.weightLog.find((e) => e.date === today);
           if (existing) {
@@ -763,18 +764,6 @@ export class OlenSettingTab extends PluginSettingTab {
     }
 
     new Setting(details)
-      .setName("Skill folder")
-      .setDesc("Vault folder containing skill tree notes")
-      .addText((t) =>
-        t.setPlaceholder("e.g. Home/Starts/Drawing/Skill tree")
-          .setValue(activity.skillFolder ?? "")
-          .onChange(async (v) => {
-            this.plugin.settings.activities[index].skillFolder = v.trim() || undefined;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(details)
       .setName("After completion")
       .setDesc("Where to go after finishing this activity")
       .addDropdown((d) =>
@@ -792,6 +781,18 @@ export class OlenSettingTab extends PluginSettingTab {
           )
           .onChange(async (v) => {
             this.plugin.settings.activities[index].completionReturnTo = v;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(details)
+      .setName("Exercise database folder")
+      .setDesc("Vault folder containing strength standard notes (e.g. Bench Press.md)")
+      .addText((t) =>
+        t.setPlaceholder("e.g. Exercises")
+          .setValue(activity.exerciseDbFolder ?? "")
+          .onChange(async (v) => {
+            this.plugin.settings.activities[index].exerciseDbFolder = v.trim() || undefined;
             await this.plugin.saveSettings();
           })
       );
@@ -984,7 +985,7 @@ export class OlenSettingTab extends PluginSettingTab {
       const now = this.plugin.settings.simulatedDate
         ? new Date(this.plugin.settings.simulatedDate)
         : new Date();
-      const today = now.toISOString().slice(0, 10);
+      const today = toLocalDateStr(now);
 
       const todayTasks = this.plugin.settings.calendar.quickTasks.filter(
         (qt) => qt.date === today
@@ -1156,6 +1157,18 @@ export class OlenSettingTab extends PluginSettingTab {
               this.plugin.settings.pauseStartTime = null;
             }
             this.plugin.settings.systemState = newState;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(body)
+      .setName("Directive debug deck")
+      .setDesc("Show debug panel below directive — reveals exactly what the completion pipeline sees")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.devConfig.showDirectiveDebug ?? false)
+          .onChange(async (v) => {
+            this.plugin.settings.devConfig.showDirectiveDebug = v;
             await this.plugin.saveSettings();
           })
       );
