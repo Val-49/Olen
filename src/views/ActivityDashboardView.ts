@@ -5,7 +5,8 @@
 
 import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
 import type OlenPlugin from "../main";
-import type { ActivityConfig, CompletionMap, Completion } from "../types";
+import type { ActivityConfig, CompletionMap } from "../types";
+import { getCompletionsFromFolder, findTodayCompletionFile, toLocalDateStr } from "../utils/completions";
 import { VIEW_TYPE_OLEN } from "../constants";
 import { THEME_PRESETS } from "../data/themes";
 import { applyAccentColor } from "../utils/accentColor";
@@ -96,7 +97,7 @@ export class ActivityDashboardView extends ItemView {
     this.applyThemeOverrides(root);
 
     // Gather completion data
-    const completionData = this.gatherCompletionData();
+    const completionData = await this.gatherCompletionData();
     const now = settings.simulatedDate ? new Date(settings.simulatedDate) : new Date();
     const engine = new OlenEngine(settings, completionData, now);
 
@@ -170,10 +171,8 @@ export class ActivityDashboardView extends ItemView {
     // 8. Consistency Calendar
     renderConsistencyCalendar(root, activity, completionData, settings, staggerIdx++);
 
-    // 9. Skill Heatmap (if applicable)
-    if (activity.skillFolder) {
-      renderSkillHeatmap(root, this.app, activity, settings, staggerIdx++);
-    }
+    // 9. Skill Heatmap
+    renderSkillHeatmap(root, this.app, activity, settings, staggerIdx++);
 
     // 10. Personal Records
     renderPersonalRecords(root, this.app, activity, completionData, settings, staggerIdx++);
@@ -221,7 +220,7 @@ export class ActivityDashboardView extends ItemView {
     for (let i = 0; i < 7; i++) {
       const d = new Date(weekStart);
       d.setDate(d.getDate() + i);
-      const dateStr = d.toISOString().slice(0, 10);
+      const dateStr = toLocalDateStr(d);
       const isFuture = i + 1 > adjustedDay;
       const isDone = completedDates.has(dateStr);
 
@@ -296,9 +295,7 @@ export class ActivityDashboardView extends ItemView {
       emoji: activity.emoji,
       category: activity.category,
       startTime: new Date().toISOString(),
-      skills: [],
       hasWorkspace: true,
-      skillFolder: activity.skillFolder,
     };
     await this.plugin.saveSettings();
     this.plugin.activateWorkspaceView();
@@ -311,14 +308,12 @@ export class ActivityDashboardView extends ItemView {
       const now = this.plugin.settings.simulatedDate
         ? new Date(this.plugin.settings.simulatedDate)
         : new Date();
-      const dateStr = now.toISOString().slice(0, 10);
+      const dateStr = toLocalDateStr(now);
       const folder = activity.folder;
       const normalizedFolder = folder.endsWith("/") ? folder : folder + "/";
 
-      const files = this.app.vault.getMarkdownFiles();
-      const todayFile = files.find(
-        (f) => (f.path === folder || f.path.startsWith(normalizedFolder)) && f.basename === dateStr
-      );
+      // Find any existing file for today (workspace files or date files)
+      const todayFile = await findTodayCompletionFile(this.app, folder, activity.property, dateStr);
 
       if (todayFile) {
         await this.app.fileManager.processFrontMatter(todayFile, (fm) => {
@@ -326,9 +321,38 @@ export class ActivityDashboardView extends ItemView {
           fm[`${activity.property}-Type`] = result.type.charAt(0).toUpperCase() + result.type.slice(1);
         });
       } else {
-        const filePath = `${normalizedFolder}${dateStr}.md`;
+        // No existing file — create a workspace-style completion file
         const typeName = result.type.charAt(0).toUpperCase() + result.type.slice(1);
-        const content = `---\n${activity.property}: true\n${activity.property}-Type: "${typeName}"\n---\n`;
+        const timeStr = `${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+        const fileName = `Workspace ${dateStr} ${timeStr}`;
+        const filePath = `${normalizedFolder}${fileName}.md`;
+
+        const tzOffset = -now.getTimezoneOffset();
+        const tzHours = String(Math.floor(Math.abs(tzOffset) / 60)).padStart(2, "0");
+        const tzMins = String(Math.abs(tzOffset) % 60).padStart(2, "0");
+        const tzSign = tzOffset >= 0 ? "+" : "-";
+        const timestamp = now.toISOString().slice(0, -1) + tzSign + tzHours + ":" + tzMins;
+
+        const content = [
+          "---",
+          `${activity.property}: true`,
+          `${activity.property}-Type: "${typeName}"`,
+          `Timestamp: "${timestamp}"`,
+          `category: "${activity.category}"`,
+          "cssclasses:",
+          "  - hide-properties",
+          "---",
+          "",
+          `# ${activity.emoji} ${activity.name} — Logged`,
+          "",
+        ].join("\n");
+
+        // Ensure folder exists
+        const abstractFolder = this.app.vault.getAbstractFileByPath(folder);
+        if (!abstractFolder) {
+          try { await this.app.vault.createFolder(folder); } catch { /* may exist */ }
+        }
+
         try {
           await this.app.vault.create(filePath, content);
         } catch {
@@ -356,11 +380,11 @@ export class ActivityDashboardView extends ItemView {
 
   // --- Data Gathering ---
 
-  private gatherCompletionData(): CompletionMap {
+  private async gatherCompletionData(): Promise<CompletionMap> {
     const data: CompletionMap = {};
     for (const activity of this.plugin.settings.activities) {
       if (!activity.enabled) continue;
-      data[activity.id] = this.getCompletionsFromFolder(activity.folder, activity.property);
+      data[activity.id] = await getCompletionsFromFolder(this.app, activity.folder, activity.property);
     }
     return data;
   }
@@ -401,18 +425,4 @@ export class ActivityDashboardView extends ItemView {
     }
   }
 
-  private getCompletionsFromFolder(folderPath: string, fieldName: string): Completion[] {
-    const files = this.app.vault.getMarkdownFiles();
-    const normalizedFolder = folderPath.endsWith("/") ? folderPath : folderPath + "/";
-
-    return files
-      .filter((file) => file.path === folderPath || file.path.startsWith(normalizedFolder))
-      .map((file) => {
-        const cache = this.app.metadataCache.getFileCache(file);
-        const frontmatter = cache?.frontmatter;
-        if (!frontmatter || typeof frontmatter[fieldName] !== "boolean") return null;
-        return { date: file.basename, completed: frontmatter[fieldName] === true };
-      })
-      .filter((c): c is Completion => c !== null);
-  }
 }

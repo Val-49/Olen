@@ -1,6 +1,6 @@
 // ============================================================
 // Olen — Workspace View
-// Active workspace screen with timer, skills, finish flow.
+// Active workspace screen with timer + finish flow.
 // When an activity has a workspaceTemplate, the template is
 // rendered instead of the default timer UI.
 // ============================================================
@@ -12,6 +12,7 @@ import { VIEW_TYPE_WORKSPACE, FALLBACK_QUOTES, DEFAULT_POMODORO_SETTINGS } from 
 import { THEME_PRESETS } from "../data/themes";
 import { applyAccentColor } from "../utils/accentColor";
 import { playAlertSound, vibrateAlert, stopAlertSound } from "../utils/alertSound";
+import { toLocalDateStr } from "../utils/completions";
 
 export class WorkspaceView extends ItemView {
   plugin: OlenPlugin;
@@ -66,7 +67,7 @@ export class WorkspaceView extends ItemView {
       // Template mode: render the activity template bound to today's daily note
       await this.renderTemplateMode(workspace, activity);
     } else {
-      // Default mode: timer + skills + finish
+      // Default mode: timer + finish
       this.startTime = new Date(workspace.startTime);
 
       // Load per-activity pomodoro settings
@@ -174,7 +175,7 @@ export class WorkspaceView extends ItemView {
     const now = this.plugin.settings.simulatedDate
       ? new Date(this.plugin.settings.simulatedDate)
       : new Date();
-    const dateStr = now.toISOString().slice(0, 10);
+    const dateStr = toLocalDateStr(now);
     const folder = activity.folder;
     const normalizedFolder = folder.endsWith("/") ? folder : folder + "/";
 
@@ -265,7 +266,7 @@ export class WorkspaceView extends ItemView {
   }
 
   // ================================================================
-  // Default Mode (timer + skills + finish)
+  // Default Mode (timer + finish)
   // ================================================================
 
   private startTimer(): void {
@@ -415,31 +416,6 @@ export class WorkspaceView extends ItemView {
     // Main content area
     const content = root.createDiv({ cls: "olen-workspace-content" });
 
-    // Skills section
-    const skillsSection = content.createDiv({ cls: "olen-workspace-skills-section" });
-    skillsSection.createEl("div", { cls: "olen-heading", text: "WORKSPACE SKILLS" });
-
-    const skillsContainer = skillsSection.createDiv({ cls: "olen-workspace-skills" });
-
-    if (workspace.skills.length === 0) {
-      skillsContainer.createEl("div", {
-        cls: "olen-workspace-no-skills",
-        text: "No skills tagged yet",
-      });
-    } else {
-      for (const skill of workspace.skills) {
-        const chip = skillsContainer.createDiv({ cls: "olen-workspace-skill-chip" });
-        chip.textContent = skill;
-      }
-    }
-
-    // Add skills button
-    const addSkillBtn = skillsSection.createEl("button", {
-      cls: "olen-btn olen-btn-secondary olen-workspace-add-skill",
-      text: "+ ADD SKILL",
-    });
-    addSkillBtn.addEventListener("click", () => this.showSkillPicker(workspace));
-
     // Focus zone — motivational area
     const focusZone = content.createDiv({ cls: "olen-workspace-focus" });
     const quote = FALLBACK_QUOTES[Math.floor(Math.random() * FALLBACK_QUOTES.length)];
@@ -460,91 +436,13 @@ export class WorkspaceView extends ItemView {
       text: catLabel,
     });
     bottomBar.style.borderLeftColor = accentColor;
-  }
 
-  private showSkillPicker(workspace: ActiveWorkspace): void {
-    // Prompt for skill name via a simple input
-    const overlay = document.createElement("div");
-    overlay.className = "olen-sheet-overlay";
-
-    const sheet = overlay.createDiv({ cls: "olen-sheet" });
-    sheet.createDiv({ cls: "olen-sheet-handle" });
-    sheet.createEl("div", { cls: "olen-heading-lg", text: "ADD SKILL" });
-
-    const inputWrap = sheet.createDiv({ attr: { style: "margin: 20px 0;" } });
-    const input = inputWrap.createEl("input", {
-      cls: "olen-workspace-skill-input",
-      attr: { type: "text", placeholder: "Skill name..." },
-    });
-
-    // If skill folder exists, load existing skills
-    if (workspace.skillFolder) {
-      const skills = this.loadSkillsFromFolder(workspace.skillFolder);
-      if (skills.length > 0) {
-        const existing = sheet.createDiv({ cls: "olen-workspace-skills", attr: { style: "margin-bottom: 16px;" } });
-        for (const skill of skills) {
-          const chip = existing.createDiv({ cls: "olen-workspace-skill-chip olen-clickable" });
-          chip.textContent = skill;
-          chip.addEventListener("click", () => {
-            addSkill(skill);
-            closeSheet();
-          });
-        }
-      }
-    }
-
-    const actions = sheet.createDiv({ cls: "olen-directive-actions" });
-
-    const addBtn = actions.createEl("button", {
-      cls: "olen-btn olen-btn-primary",
-      text: "ADD",
-    });
-    addBtn.addEventListener("click", () => {
-      const val = input.value.trim();
-      if (val) {
-        addSkill(val);
-        closeSheet();
-      }
-    });
-
-    const cancelBtn = actions.createEl("button", {
+    // Back to Home button
+    const backBtn = bottomBar.createEl("button", {
       cls: "olen-btn olen-btn-secondary",
-      text: "CANCEL",
+      text: "← Back to Home",
     });
-    cancelBtn.addEventListener("click", () => closeSheet());
-
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeSheet();
-    });
-
-    const addSkill = (name: string) => {
-      if (!workspace.skills.includes(name)) {
-        workspace.skills.push(name);
-        this.plugin.settings.activeWorkspace = workspace;
-        this.plugin.saveSettings();
-        this.render(workspace);
-      }
-    };
-
-    const closeSheet = () => {
-      overlay.classList.remove("visible");
-      setTimeout(() => overlay.remove(), 350);
-    };
-
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => {
-      overlay.classList.add("visible");
-      input.focus();
-    });
-  }
-
-  private loadSkillsFromFolder(folderPath: string): string[] {
-    const files = this.app.vault.getMarkdownFiles();
-    const normalizedFolder = folderPath.endsWith("/") ? folderPath : folderPath + "/";
-    return files
-      .filter((f) => f.path.startsWith(normalizedFolder))
-      .map((f) => f.basename)
-      .sort();
+    backBtn.addEventListener("click", () => this.plugin.activateDashboardView());
   }
 
   private renderPomodoroDots(container: HTMLElement): void {
@@ -762,17 +660,18 @@ export class WorkspaceView extends ItemView {
   }
 
   private showPomodoroSettingsPanel(workspace: ActiveWorkspace): void {
-    const overlay = document.createElement("div");
-    overlay.className = "olen-sheet-overlay";
+    const modal = document.createElement("div");
+    modal.className = "olen-quick-task-modal";
 
-    const sheet = overlay.createDiv({ cls: "olen-sheet" });
-    sheet.createDiv({ cls: "olen-sheet-handle" });
-    sheet.createEl("div", { cls: "olen-heading-lg", text: "TIMER SETTINGS" });
+    const backdrop = modal.createDiv({ cls: "olen-quick-task-backdrop" });
+    const sheet = modal.createDiv({ cls: "olen-quick-task-sheet" });
+
+    sheet.createEl("div", { cls: "olen-quick-task-title", text: "TIMER SETTINGS" });
 
     const profileLabel = `${this.pomSettings.focusMinutes}/${this.pomSettings.breakMinutes}`;
     sheet.createEl("div", {
       cls: "olen-body-italic",
-      attr: { style: "margin: 4px 0 16px; opacity: 0.6;" },
+      attr: { style: "margin: -8px 0 16px; opacity: 0.6; font-size: 12px;" },
       text: `Profile: ${profileLabel}`,
     });
 
@@ -906,10 +805,16 @@ export class WorkspaceView extends ItemView {
     });
 
     // Save button
-    const actions = sheet.createDiv({ attr: { style: "display: flex; gap: 12px; justify-content: center; margin-top: 20px;" } });
+    const actions = sheet.createDiv({ cls: "olen-quick-task-actions" });
+    const cancelBtn = actions.createEl("button", {
+      cls: "olen-quick-task-cancel",
+      text: "Cancel",
+    });
+    cancelBtn.addEventListener("click", () => closeModal());
+
     const saveBtn = actions.createEl("button", {
-      cls: "olen-btn olen-btn-primary",
-      text: "SAVE",
+      cls: "olen-quick-task-add",
+      text: "Save",
     });
     saveBtn.addEventListener("click", async () => {
       this.pomSettings.focusMinutes = Math.max(1, parseInt(focusInput.value) || 25);
@@ -935,26 +840,14 @@ export class WorkspaceView extends ItemView {
       this.updatePomodoroDots();
 
       new Notice("Pomodoro settings saved");
-      closeSheet();
+      closeModal();
     });
 
-    const cancelBtn = actions.createEl("button", {
-      cls: "olen-btn olen-btn-secondary",
-      text: "CANCEL",
-    });
-    cancelBtn.addEventListener("click", () => closeSheet());
+    backdrop.addEventListener("click", () => closeModal());
 
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeSheet();
-    });
+    const closeModal = () => modal.remove();
 
-    const closeSheet = () => {
-      overlay.classList.remove("visible");
-      setTimeout(() => overlay.remove(), 350);
-    };
-
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add("visible"));
+    document.body.appendChild(modal);
   }
 
   private showSoundFilePicker(labelEl: HTMLElement): void {
@@ -966,12 +859,13 @@ export class WorkspaceView extends ItemView {
       })
       .sort((a, b) => a.path.localeCompare(b.path));
 
-    const overlay = document.createElement("div");
-    overlay.className = "olen-sheet-overlay";
+    const modal = document.createElement("div");
+    modal.className = "olen-quick-task-modal";
 
-    const sheet = overlay.createDiv({ cls: "olen-sheet" });
-    sheet.createDiv({ cls: "olen-sheet-handle" });
-    sheet.createEl("div", { cls: "olen-heading-lg", text: "SELECT SOUND FILE" });
+    const backdrop = modal.createDiv({ cls: "olen-quick-task-backdrop" });
+    const sheet = modal.createDiv({ cls: "olen-quick-task-sheet" });
+
+    sheet.createEl("div", { cls: "olen-quick-task-title", text: "SELECT SOUND FILE" });
 
     if (files.length === 0) {
       sheet.createEl("div", {
@@ -987,29 +881,23 @@ export class WorkspaceView extends ItemView {
         item.addEventListener("click", () => {
           this.pomSettings.soundFile = file.path;
           labelEl.textContent = file.name;
-          closeSheet();
+          closeModal();
         });
       }
     }
 
     const cancelBtn = sheet.createEl("button", {
-      cls: "olen-btn olen-btn-secondary",
-      attr: { style: "margin-top: 12px;" },
-      text: "CANCEL",
+      cls: "olen-quick-task-cancel",
+      attr: { style: "margin-top: 12px; width: 100%;" },
+      text: "Cancel",
     });
-    cancelBtn.addEventListener("click", () => closeSheet());
+    cancelBtn.addEventListener("click", () => closeModal());
 
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeSheet();
-    });
+    backdrop.addEventListener("click", () => closeModal());
 
-    const closeSheet = () => {
-      overlay.classList.remove("visible");
-      setTimeout(() => overlay.remove(), 350);
-    };
+    const closeModal = () => modal.remove();
 
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add("visible"));
+    document.body.appendChild(modal);
   }
 
   private showFinishModal(workspace: ActiveWorkspace): void {
@@ -1067,7 +955,6 @@ export class WorkspaceView extends ItemView {
           startTime: workspace.startTime,
           endTime: endTime.toISOString(),
           durationMinutes,
-          skills: workspace.skills,
         };
 
         await this.finishWorkspace(result, workspace);
@@ -1091,17 +978,14 @@ export class WorkspaceView extends ItemView {
       await this.createWorkspaceFile(result, activity.folder);
     }
 
-    // 2. Update the activity's daily note frontmatter
-    await this.markActivityDone(workspace, result);
-
-    // 3. Apply XP
+    // 2. Apply XP
     const state = this.plugin.settings.workspaceCompletionStates.find((s) => s.id === result.type);
     if (state && state.xpMultiplier > 0) {
       const xpGain = Math.round(this.plugin.settings.devConfig.xpPerCompletion * state.xpMultiplier);
       this.plugin.settings.categoryXP[workspace.category] += xpGain;
     }
 
-    // 4. Apply boss damage (unless skipped)
+    // 3. Apply boss damage (unless skipped)
     if (result.type !== "skipped") {
       const act = this.plugin.settings.activities.find((a) => a.id === workspace.activityId);
       if (act) {
@@ -1112,15 +996,15 @@ export class WorkspaceView extends ItemView {
       }
     }
 
-    // 5. Clear active workspace
+    // 4. Clear active workspace
     this.plugin.settings.activeWorkspace = null;
     await this.plugin.saveSettings();
 
-    // 6. Show notice
+    // 5. Show notice
     const stateLabel = this.plugin.settings.workspaceCompletionStates.find((s) => s.id === result.type)?.name ?? result.type;
     new Notice(`${workspace.emoji} ${workspace.activityName} — ${stateLabel} · ${result.durationMinutes}m`);
 
-    // 7. Switch back to dashboard
+    // 6. Switch back to dashboard
     this.plugin.activateDashboardView();
   }
 
@@ -1130,7 +1014,7 @@ export class WorkspaceView extends ItemView {
 
     const endTime = new Date(result.endTime);
     const startTime = new Date(result.startTime);
-    const dateStr = endTime.toISOString().slice(0, 10);
+    const dateStr = toLocalDateStr(endTime);
     // Naming: "Workspace YYYY-MM-DD HHMM"
     const timeStr = `${String(endTime.getHours()).padStart(2, "0")}${String(endTime.getMinutes()).padStart(2, "0")}`;
     const fileName = `Workspace ${dateStr} ${timeStr}`;
@@ -1162,9 +1046,7 @@ export class WorkspaceView extends ItemView {
       `endTime: "${endTimestamp}"`,
       `duration: "${durationStr}"`,
       `category: "${result.category}"`,
-      result.skills.length > 0
-        ? `skills: [${result.skills.map((s) => `"${s}"`).join(", ")}]`
-        : "skills: []",
+      "skills: []",
       "cssclasses:",
       "  - hide-properties",
       "---",
@@ -1204,47 +1086,7 @@ export class WorkspaceView extends ItemView {
     await this.app.vault.create(finalPath, content);
   }
 
-  private async markActivityDone(workspace: ActiveWorkspace, result?: WorkspaceResult): Promise<void> {
-    // Find today's note in the activity folder and set the property to true
-    const activity = this.plugin.settings.activities.find((a) => a.id === workspace.activityId);
-    if (!activity) return;
 
-    const now = this.plugin.settings.simulatedDate
-      ? new Date(this.plugin.settings.simulatedDate)
-      : new Date();
-    const dateStr = now.toISOString().slice(0, 10);
-    const folder = activity.folder;
-    const normalizedFolder = folder.endsWith("/") ? folder : folder + "/";
-
-    // Look for a file matching today's date
-    const files = this.app.vault.getMarkdownFiles();
-    const todayFile = files.find(
-      (f) => (f.path === folder || f.path.startsWith(normalizedFolder)) && f.basename === dateStr
-    );
-
-    if (todayFile) {
-      // Update frontmatter — set property and completion type
-      await this.app.fileManager.processFrontMatter(todayFile, (frontmatter) => {
-        frontmatter[activity.property] = true;
-        if (result) {
-          const typeName = result.type.charAt(0).toUpperCase() + result.type.slice(1);
-          frontmatter[`${activity.property}-Type`] = typeName;
-        }
-      });
-    } else {
-      // Create the daily note with the property set
-      const filePath = `${normalizedFolder}${dateStr}.md`;
-      const typeLine = result
-        ? `\n${activity.property}-Type: "${result.type.charAt(0).toUpperCase() + result.type.slice(1)}"`
-        : "";
-      const content = `---\n${activity.property}: true${typeLine}\n---\n`;
-      try {
-        await this.app.vault.create(filePath, content);
-      } catch {
-        // File might already exist with a different name
-      }
-    }
-  }
 
   private formatTime(seconds: number): string {
     const h = Math.floor(seconds / 3600);

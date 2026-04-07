@@ -5,7 +5,8 @@
 
 import { ItemView, WorkspaceLeaf, TFile, Notice } from "obsidian";
 import type OlenPlugin from "../main";
-import type { CompletionMap, Completion, CalendarTask } from "../types";
+import type { CompletionMap, CalendarTask } from "../types";
+import { getCompletionsFromFolder, findTodayCompletionFile, toLocalDateStr } from "../utils/completions";
 import { VIEW_TYPE_OLEN, VIEW_TYPE_WORKSPACE } from "../constants";
 import { stopAlertSound } from "../utils/alertSound";
 import { THEME_PRESETS } from "../data/themes";
@@ -24,6 +25,7 @@ import { renderDayTimeline } from "../components/DayTimeline";
 import { renderWeightNotification } from "../components/WeightProgress";
 import { renderProgressAnalytics } from "../components/ProgressAnalytics";
 import { renderMementoMoriCompact } from "../components/MementoMori";
+import { renderDirectiveDebug } from "../components/DirectiveDebug";
 import { shouldShowSundayBanner, renderSundayBanner, renderOptOutModal } from "../components/SundayCheckin";
 import { openSundayModal } from "../modals/SundayModal";
 // MyWhyModal is no longer used — tapping "My Why" navigates to DreamBoardView
@@ -85,8 +87,8 @@ export class DashboardView extends ItemView {
       this.renderActiveWorkspaceBanner(root, ws);
     }
 
-    // Gather completion data from vault
-    const completionData = this.gatherCompletionData();
+    // Gather completion data from vault (reads file content directly)
+    const completionData = await this.gatherCompletionData();
 
     // Initialize engines
     const now = settings.simulatedDate ? new Date(settings.simulatedDate) : new Date();
@@ -134,7 +136,12 @@ export class DashboardView extends ItemView {
             (activityId) => this.handleEnterWorkspace(activityId),
             (taskId) => this.handleTempleComplete(taskId),
             () => this.handleLogWeight(),
+            (activityId) => this.handleSkipActivity(activityId, engine),
           );
+          // Debug deck — shows exactly what the completion pipeline sees
+          if (settings.devConfig.showDirectiveDebug) {
+            await renderDirectiveDebug(root, this.app, settings, engine, completionData, staggerIdx++);
+          }
           break;
 
         case "boss":
@@ -190,7 +197,7 @@ export class DashboardView extends ItemView {
         },
         onIgnore: async () => {
           // Mark today as "handled" so banner won't reappear until next Sunday
-          settings.sundayCheckin.lastCheckinDate = now2.toISOString().slice(0, 10);
+          settings.sundayCheckin.lastCheckinDate = toLocalDateStr(now2);
           settings.sundayCheckin.consecutiveIgnores++;
           await this.plugin.saveSettings();
 
@@ -298,35 +305,15 @@ export class DashboardView extends ItemView {
 
   // --- Data Gathering ---
 
-  gatherCompletionData(): CompletionMap {
+  async gatherCompletionData(): Promise<CompletionMap> {
     const data: CompletionMap = {};
 
     for (const activity of this.plugin.settings.activities) {
       if (!activity.enabled) continue;
-      data[activity.id] = this.getCompletionsFromFolder(activity.folder, activity.property);
+      data[activity.id] = await getCompletionsFromFolder(this.app, activity.folder, activity.property);
     }
 
     return data;
-  }
-
-  private getCompletionsFromFolder(folderPath: string, fieldName: string): Completion[] {
-    const files = this.app.vault.getMarkdownFiles();
-    const normalizedFolder = folderPath.endsWith("/") ? folderPath : folderPath + "/";
-
-    return files
-      .filter((file) => file.path === folderPath || file.path.startsWith(normalizedFolder))
-      .map((file) => {
-        const cache = this.app.metadataCache.getFileCache(file);
-        const frontmatter = cache?.frontmatter;
-        if (!frontmatter || typeof frontmatter[fieldName] !== "boolean") {
-          return null;
-        }
-        return {
-          date: file.basename,
-          completed: frontmatter[fieldName] === true,
-        };
-      })
-      .filter((c): c is Completion => c !== null);
   }
 
   // --- Calendar Gathering ---
@@ -338,7 +325,7 @@ export class DashboardView extends ItemView {
     // Option A: Daily Notes — read today's note content
     if (settings.calendar.enableDailyNotes && settings.calendar.dailyNotesFolder) {
       const now = settings.simulatedDate ? new Date(settings.simulatedDate) : new Date();
-      const today = now.toISOString().slice(0, 10);
+      const today = toLocalDateStr(now);
       const folder = settings.calendar.dailyNotesFolder;
       const normalizedFolder = folder.endsWith("/") ? folder : folder + "/";
 
@@ -359,7 +346,7 @@ export class DashboardView extends ItemView {
       const tasksPlugin = (this.app as any).plugins?.plugins?.["obsidian-tasks-plugin"];
       if (tasksPlugin) {
         const now = settings.simulatedDate ? new Date(settings.simulatedDate) : new Date();
-        const today = now.toISOString().slice(0, 10);
+        const today = toLocalDateStr(now);
         const filesWithTasks: { path: string; content: string }[] = [];
 
         for (const file of this.app.vault.getMarkdownFiles()) {
@@ -380,7 +367,7 @@ export class DashboardView extends ItemView {
     // Option C: Quick Tasks — already handled by CalendarEngine.getAllTasks()
     if (settings.calendar.enableQuickTasks) {
       const now = settings.simulatedDate ? new Date(settings.simulatedDate) : new Date();
-      const today = now.toISOString().slice(0, 10);
+      const today = toLocalDateStr(now);
       tasks.push(
         ...settings.calendar.quickTasks
           .filter((qt) => qt.date === today)
@@ -413,9 +400,7 @@ export class DashboardView extends ItemView {
         emoji: activity.emoji,
         category: activity.category,
         startTime: new Date().toISOString(),
-        skills: [],
         hasWorkspace: true,
-        skillFolder: activity.skillFolder,
       };
       await this.plugin.saveSettings();
       this.plugin.activateWorkspaceView();
@@ -506,7 +491,7 @@ export class DashboardView extends ItemView {
       id: entry.calendarTaskId ?? entry.activityId,
       title: entry.activityName,
       source: entry.calendarSource,
-      date: now.toISOString().slice(0, 10),
+      date: toLocalDateStr(now),
       done: false,
       filePath: entry.filePath,
       lineNumber: entry.lineNumber,
@@ -521,15 +506,12 @@ export class DashboardView extends ItemView {
     const now = this.plugin.settings.simulatedDate
       ? new Date(this.plugin.settings.simulatedDate)
       : new Date();
-    const dateStr = now.toISOString().slice(0, 10);
+    const dateStr = toLocalDateStr(now);
     const folder = activity.folder;
     const normalizedFolder = folder.endsWith("/") ? folder : folder + "/";
 
-    // Look for today's file
-    const files = this.app.vault.getMarkdownFiles();
-    const todayFile = files.find(
-      (f) => (f.path === folder || f.path.startsWith(normalizedFolder)) && f.basename === dateStr
-    );
+    // Look for any file in the folder that matches today (workspace files or date files)
+    const todayFile = await findTodayCompletionFile(this.app, folder, activity.property, dateStr);
 
     if (todayFile) {
       await this.app.fileManager.processFrontMatter(todayFile, (fm) => {
@@ -589,7 +571,7 @@ export class DashboardView extends ItemView {
         return;
       }
 
-      const today = new Date().toISOString().slice(0, 10);
+      const today = toLocalDateStr(new Date());
       const existing = this.plugin.settings.personalStats.weightLog.find((e) => e.date === today);
       if (existing) {
         existing.weight = w;
